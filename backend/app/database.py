@@ -1,8 +1,3 @@
-"""
-資料庫連線設定
-
-使用 SQLAlchemy 2.0+ 管理 PostgreSQL 連線
-"""
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
