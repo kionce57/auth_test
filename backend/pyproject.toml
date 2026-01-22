@@ -9,7 +9,6 @@ dependencies = [
     "sqlalchemy>=2.0.0",
     "psycopg2-binary>=2.9.0",
     "pydantic-settings>=2.6.0",
-    "python-dotenv>=1.0.0",
 ]
 
 [tool.hatch.build.targets.wheel]
