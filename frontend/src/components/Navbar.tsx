@@ -4,6 +4,10 @@ import { useAuth } from '../context/AuthContext';
 export const Navbar: React.FC = () => {
   const { user, logout } = useAuth();
 
+  const handleLogout = async () => {
+    await logout();
+  };
+
   return (
     <nav
       style={{
@@ -26,7 +30,7 @@ export const Navbar: React.FC = () => {
           <>
             <span style={{ fontSize: '14px' }}>使用者：{user.email}</span>
             <button
-              onClick={logout}
+              onClick={handleLogout}
               style={{
                 padding: '6px 12px',
                 backgroundColor: '#dc3545',

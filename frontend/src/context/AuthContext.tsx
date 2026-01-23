@@ -10,16 +10,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     const initAuth = async () => {
-      if (authService.isAuthenticated()) {
-        try {
-          const currentUser = await authService.getCurrentUser();
-          setUser(currentUser);
-        } catch (error) {
-          authService.logout();
-          setUser(null);
-        }
+      try {
+        // 嘗試從 Cookie 取得當前使用者
+        const currentUser = await authService.getCurrentUser();
+        setUser(currentUser);
+      } catch (error) {
+        // 如果失敗（401），代表未登入或 token 過期
+        setUser(null);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     };
 
     initAuth();
@@ -43,9 +43,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const logout = (): void => {
-    authService.logout();
-    setUser(null);
+  const logout = async (): Promise<void> => {
+    try {
+      await authService.logout();
+    } catch (error) {
+      // 即使後端登出失敗，仍然清除前端狀態
+      console.error('Logout error:', error);
+    } finally {
+      setUser(null);
+    }
   };
 
   const value: AuthContextType = {
