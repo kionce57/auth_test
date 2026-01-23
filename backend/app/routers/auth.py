@@ -1,7 +1,6 @@
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
 from fastapi.security import OAuth2PasswordRequestForm
 from slowapi import Limiter
-from slowapi.util import get_remote_address
 from sqlalchemy.orm import Session
 
 from app.auth import (
@@ -12,17 +11,29 @@ from app.auth import (
     verify_password,
     verify_refresh_token,
 )
+from app.config import settings
 from app.database import get_db
 from app.models import User
 from app.schemas import Token, UserCreate, UserResponse
 
 router = APIRouter(prefix="/auth", tags=["auth"])
-limiter = Limiter(key_func=get_remote_address)
+
+
+def get_client_ip(request: Request) -> str:
+    """安全地取得客戶端 IP，處理反向代理情況。"""
+    if settings.trust_proxy:
+        forwarded = request.headers.get("X-Forwarded-For")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+limiter = Limiter(key_func=get_client_ip)
 
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 @limiter.limit("3/minute")
-async def register(request: Request, user_data: UserCreate, db: Session = Depends(get_db)):
+def register(request: Request, user_data: UserCreate, db: Session = Depends(get_db)):
     """註冊新使用者。
 
     Args:
@@ -54,7 +65,7 @@ async def register(request: Request, user_data: UserCreate, db: Session = Depend
 
 @router.post("/login")
 @limiter.limit("5/minute")
-async def login(
+def login(
     request: Request,
     response: Response,
     form_data: OAuth2PasswordRequestForm = Depends(),
@@ -93,8 +104,8 @@ async def login(
         key="access_token",
         value=access_token,
         httponly=True,
-        secure=False,  # 開發環境使用 False，生產環境改為 True（需 HTTPS）
-        samesite="lax",
+        secure=settings.cookie_secure,  # 生產環境自動啟用
+        samesite=settings.cookie_samesite,
         max_age=900  # 15 分鐘（秒）
     )
 
@@ -103,8 +114,8 @@ async def login(
         key="refresh_token",
         value=refresh_token,
         httponly=True,
-        secure=False,
-        samesite="lax",
+        secure=settings.cookie_secure,  # 生產環境自動啟用
+        samesite=settings.cookie_samesite,
         max_age=604800  # 7 天（秒）
     )
 
@@ -112,15 +123,29 @@ async def login(
 
 
 @router.post("/logout")
-def logout(response: Response):
-    """使用者登出，清除 Cookie。
+def logout(
+    response: Response,
+    refresh_token: str = Cookie(None),
+    db: Session = Depends(get_db)
+):
+    """使用者登出，清除 Cookie 並撤銷 refresh token。
 
     Args:
         response: FastAPI Response 物件
+        refresh_token: Refresh Token（從 Cookie 讀取）
+        db: 資料庫 session
 
     Returns:
         登出成功訊息
     """
+    # 撤銷資料庫中的 refresh token
+    if refresh_token:
+        try:
+            revoke_refresh_token(refresh_token, db)
+        except Exception:
+            # 即使撤銷失敗也要清除 Cookie（避免使用者無法登出）
+            pass
+
     response.delete_cookie(key="access_token")
     response.delete_cookie(key="refresh_token")
     return {"message": "Logout successful"}
@@ -128,7 +153,7 @@ def logout(response: Response):
 
 @router.post("/refresh")
 @limiter.limit("20/minute")
-async def refresh_token(
+def refresh_token(
     request: Request,
     response: Response,
     refresh_token: str = Cookie(None),
@@ -165,8 +190,8 @@ async def refresh_token(
         key="access_token",
         value=new_access_token,
         httponly=True,
-        secure=False,
-        samesite="lax",
+        secure=settings.cookie_secure,  # 生產環境自動啟用
+        samesite=settings.cookie_samesite,
         max_age=900
     )
 
@@ -175,8 +200,8 @@ async def refresh_token(
         key="refresh_token",
         value=new_refresh_token,
         httponly=True,
-        secure=False,
-        samesite="lax",
+        secure=settings.cookie_secure,  # 生產環境自動啟用
+        samesite=settings.cookie_samesite,
         max_age=604800
     )
 

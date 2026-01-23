@@ -1,16 +1,37 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
 
 from app.config import settings
 from app.routers import auth, users
 
 app = FastAPI()
 
-# 設定 Rate Limiter
-limiter = Limiter(key_func=get_remote_address)
+
+def get_client_ip(request: Request) -> str:
+    """安全地取得客戶端 IP，處理反向代理情況。
+
+    Args:
+        request: FastAPI Request 物件
+
+    Returns:
+        客戶端 IP 位址
+    """
+    # 如果啟用 trust_proxy 且有 X-Forwarded-For header
+    if settings.trust_proxy:
+        forwarded = request.headers.get("X-Forwarded-For")
+        if forwarded:
+            # X-Forwarded-For 格式: client, proxy1, proxy2
+            # 取第一個 IP（真實客戶端 IP）
+            return forwarded.split(",")[0].strip()
+
+    # 否則使用直接連線 IP
+    return request.client.host if request.client else "unknown"
+
+
+# 設定 Rate Limiter（使用安全的 IP 取得函式）
+limiter = Limiter(key_func=get_client_ip)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
