@@ -106,8 +106,10 @@ api.interceptors.response.use(
         // 廣播刷新失敗事件
         refreshChannel?.postMessage({ type: 'REFRESH_FAILED' });
 
-        // 刷新失敗，重導向至登入頁
-        window.location.href = '/login';
+        // 刷新失敗，重導向至登入頁（避免無限循環）
+        if (window.location.pathname !== '/login' && window.location.pathname !== '/register') {
+          window.location.href = '/login';
+        }
         return Promise.reject(refreshError);
       } finally {
         isRefreshing = false;
