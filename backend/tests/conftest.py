@@ -34,6 +34,10 @@ def db():
 @pytest.fixture(scope="function")
 def client(db):
     """Create a test client with overridden database dependency."""
+    # Reset rate limiter before each test
+    from app.routers.auth import limiter
+    limiter.reset()
+
     def override_get_db():
         try:
             yield db
