@@ -100,7 +100,8 @@ def create_refresh_token(user_id: int, db: Session) -> str:
     refresh_token = RefreshToken(
         token=token_value,
         user_id=user_id,
-        expires_at=expires_at
+        expires_at=expires_at,
+        is_revoked=False
     )
     db.add(refresh_token)
     db.commit()
