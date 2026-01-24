@@ -7,6 +7,7 @@ export const RegisterForm: React.FC = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [rateLimitCountdown, setRateLimitCountdown] = useState<number>(0);
 
@@ -33,6 +34,14 @@ export const RegisterForm: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    setPasswordError(null);
+
+    // 前端密碼驗證
+    if (password.length < 8 || password.length > 72) {
+      setPasswordError('密碼需為 8-72 個字元');
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -77,10 +86,24 @@ export const RegisterForm: React.FC = () => {
           type="password"
           id="password"
           value={password}
-          onChange={(e) => setPassword(e.target.value)}
+          onChange={(e) => {
+            setPassword(e.target.value);
+            setPasswordError(null);  // 清除錯誤提示
+          }}
           required
+          maxLength={72}
           style={{ width: '100%', padding: '8px', fontSize: '14px' }}
         />
+        {passwordError && (
+          <div style={{ color: 'red', fontSize: '12px', marginTop: '4px' }}>
+            {passwordError}
+          </div>
+        )}
+        {!passwordError && (
+          <small style={{ color: '#666', fontSize: '12px' }}>
+            密碼需為 8-72 個字元
+          </small>
+        )}
       </div>
 
       {error && (
