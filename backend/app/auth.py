@@ -75,6 +75,8 @@ def decode_access_token(token: str) -> dict:
 def create_refresh_token(user_id: int, db: Session) -> str:
     """生成並儲存 refresh token。
 
+    同時執行懶刪除，清理該使用者的過期 token，防止資料庫膨脹。
+
     Args:
         user_id: 使用者 ID
         db: 資料庫 session
@@ -83,6 +85,12 @@ def create_refresh_token(user_id: int, db: Session) -> str:
         Refresh token 字串
     """
     from app.models import RefreshToken
+
+    # 懶刪除：清理該使用者的過期或已撤銷 token
+    db.query(RefreshToken).filter(
+        RefreshToken.user_id == user_id,
+        (RefreshToken.expires_at < datetime.now(timezone.utc)) | (RefreshToken.is_revoked == True)  # noqa: E712
+    ).delete(synchronize_session=False)
 
     # 生成安全隨機 token
     token_value = secrets.token_urlsafe(64)
@@ -140,3 +148,39 @@ def revoke_refresh_token(token: str, db: Session) -> None:
         {"is_revoked": True}
     )
     db.commit()
+
+
+def verify_and_revoke_refresh_token(token: str, db: Session):
+    """原子性地驗證並撤銷 refresh token（避免競態條件）。
+
+    使用 SELECT FOR UPDATE 鎖定資料庫行，確保在併發請求下：
+    - 只有一個請求能成功驗證並撤銷 token
+    - 其他請求會等待鎖釋放後發現 token 已撤銷
+
+    Args:
+        token: Refresh token 字串
+        db: 資料庫 session
+
+    Returns:
+        User 物件
+
+    Raises:
+        HTTPException: Token 無效、已撤銷或過期
+    """
+    from app.models import RefreshToken
+
+    # 使用 SELECT FOR UPDATE 鎖定該行（避免其他 transaction 同時讀取）
+    db_token = db.query(RefreshToken).filter(
+        RefreshToken.token == token,
+        RefreshToken.is_revoked == False,  # noqa: E712
+        RefreshToken.expires_at > datetime.now(timezone.utc)
+    ).with_for_update().first()
+
+    if not db_token:
+        raise HTTPException(status_code=401, detail="Invalid refresh token")
+
+    # 在同一個 transaction 中撤銷（持有鎖的情況下）
+    db_token.is_revoked = True
+    db.commit()
+
+    return db_token.user

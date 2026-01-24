@@ -8,6 +8,7 @@ from app.auth import (
     create_refresh_token,
     hash_password,
     revoke_refresh_token,
+    verify_and_revoke_refresh_token,
     verify_password,
     verify_refresh_token,
 )
@@ -175,11 +176,8 @@ def refresh_token(
     if not refresh_token:
         raise HTTPException(status_code=401, detail="Refresh token missing")
 
-    # 驗證舊 Refresh Token
-    user = verify_refresh_token(refresh_token, db)
-
-    # Token Rotation：撤銷舊 token
-    revoke_refresh_token(refresh_token, db)
+    # 原子性驗證並撤銷（避免 race condition）
+    user = verify_and_revoke_refresh_token(refresh_token, db)
 
     # 發放新的 Access Token + Refresh Token
     new_access_token = create_access_token(data={"sub": user.email})

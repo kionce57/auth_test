@@ -27,6 +27,39 @@ const processQueue = (error: Error | null, token: string | null = null) => {
   failedQueue = [];
 };
 
+// BroadcastChannel for cross-tab token refresh synchronization
+const refreshChannel = typeof BroadcastChannel !== 'undefined'
+  ? new BroadcastChannel('auth-refresh')
+  : null;
+
+if (refreshChannel) {
+  refreshChannel.onmessage = (event) => {
+    const { type } = event.data;
+
+    switch (type) {
+      case 'REFRESH_START':
+        // 其他 tab 開始刷新，本 tab 進入等待模式
+        if (!isRefreshing) {
+          isRefreshing = true;
+        }
+        break;
+
+      case 'REFRESH_SUCCESS':
+        // 其他 tab 刷新成功，本 tab 的 pending 請求可以重試
+        processQueue(null, 'success');
+        isRefreshing = false;
+        break;
+
+      case 'REFRESH_FAILED':
+        // 其他 tab 刷新失敗，本 tab 也需要重導向
+        processQueue(new Error('Token refresh failed'), null);
+        isRefreshing = false;
+        window.location.href = '/login';
+        break;
+    }
+  };
+}
+
 // Response interceptor: 自動刷新 Access Token
 api.interceptors.response.use(
   (response) => response,
@@ -56,12 +89,23 @@ api.interceptors.response.use(
       originalRequest._retry = true;
       isRefreshing = true;
 
+      // 廣播刷新開始事件
+      refreshChannel?.postMessage({ type: 'REFRESH_START' });
+
       try {
         await api.post('/auth/refresh');
         processQueue(null, 'success');
+
+        // 廣播刷新成功事件
+        refreshChannel?.postMessage({ type: 'REFRESH_SUCCESS' });
+
         return api(originalRequest); // 重試原請求
       } catch (refreshError) {
         processQueue(refreshError as Error, null);
+
+        // 廣播刷新失敗事件
+        refreshChannel?.postMessage({ type: 'REFRESH_FAILED' });
+
         // 刷新失敗，重導向至登入頁
         window.location.href = '/login';
         return Promise.reject(refreshError);
