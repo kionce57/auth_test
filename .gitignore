@@ -20,3 +20,8 @@ wheels/
 node_modules/
 frontend/dist/
 frontend/tsconfig.tsbuildinfo
+
+# Test coverage
+backend/htmlcov/
+backend/.coverage
+frontend/coverage/

@@ -124,9 +124,9 @@ describe('RegisterForm', () => {
     const passwordInput = screen.getByLabelText(/密碼/i);
     const submitButton = screen.getByRole('button', { name: /註冊/i });
 
-    // 使用有效的 email 格式讓 HTML5 驗證通過，但伺服器會返回 422
+    // 使用有效的 email 格式和有效的密碼長度讓 HTML5 驗證通過，但伺服器會返回 422
     await user.type(emailInput, 'test@example.com');
-    await user.type(passwordInput, 'short');
+    await user.type(passwordInput, 'validpass123');
     await user.click(submitButton);
 
     await waitFor(() => {
