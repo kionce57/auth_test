@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+
+# Testing
+coverage/
+**/*.test.*
+**/*.spec.*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Environment
+.env
+.env.local
+
+# Git
+.git/
+.gitignore
+
+# Misc
+*.log
+.DS_Store

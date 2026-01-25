@@ -49,6 +49,37 @@ npm run dev
 - **後端 API**: http://localhost:8000/docs (Swagger UI)
 - **健康檢查**: http://localhost:8000/health
 
+### 使用 Docker 啟動（推薦）
+
+**一鍵啟動所有服務**：
+```bash
+# 建置並啟動
+docker compose up -d
+
+# 查看日誌
+docker compose logs -f
+
+# 停止服務
+docker compose down
+
+# 停止並刪除資料（重置資料庫）
+docker compose down -v
+```
+
+**訪問**：
+- **前端**: http://localhost:3000
+- **後端 API**: http://localhost:8000/docs
+- **健康檢查**: http://localhost:8000/health（直接訪問後端）
+
+**開發模式**：
+- 後端程式碼掛載為 volume，修改自動重載
+- 前端為生產建置（需重建映像檔才能看到更改）
+
+**注意**：
+- Docker 部署自動執行資料庫 migrations
+- 前端透過 nginx 代理 `/api/*` 到後端
+- 所有服務在同一 Docker 網路中通訊
+
 ### 資料庫遷移
 ```bash
 cd backend
