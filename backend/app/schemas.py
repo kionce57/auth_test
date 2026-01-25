@@ -20,3 +20,15 @@ class UserResponse(BaseModel):
 class Token(BaseModel):
     access_token: str
     token_type: str
+
+
+class SessionCreate(BaseModel):
+    """建立 session（v2 login）"""
+    email: EmailStr
+    password: str
+
+
+class SessionResponse(BaseModel):
+    """Session 建立回應"""
+    message: str
+    user: UserResponse

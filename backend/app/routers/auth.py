@@ -15,7 +15,7 @@ from app.auth import (
 from app.config import settings
 from app.database import get_db
 from app.models import User
-from app.schemas import Token, UserCreate, UserResponse
+from app.schemas import SessionCreate, SessionResponse, Token, UserCreate, UserResponse
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -204,3 +204,107 @@ def refresh_token(
     )
 
     return {"message": "Token refreshed"}
+
+
+# ============= API v2 =============
+router_v2 = APIRouter()
+
+
+@router_v2.post("", status_code=status.HTTP_201_CREATED)
+@limiter.limit("5/minute")
+def create_session(
+    request: Request,
+    response: Response,
+    credentials: SessionCreate,
+    db: Session = Depends(get_db)
+):
+    """建立 session (v2 login) - 使用 JSON body"""
+    user = db.query(User).filter(User.email == credentials.email).first()
+
+    if not user or not verify_password(credentials.password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password",
+        )
+
+    # 建立 tokens（邏輯與 v1 相同）
+    access_token = create_access_token(data={"sub": user.email})
+    refresh_token_value = create_refresh_token(user.id, db)
+
+    # 設定 cookies
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        secure=settings.cookie_secure,
+        samesite=settings.cookie_samesite,
+        max_age=900
+    )
+    response.set_cookie(
+        key="refresh_token",
+        value=refresh_token_value,
+        httponly=True,
+        secure=settings.cookie_secure,
+        samesite=settings.cookie_samesite,
+        max_age=604800
+    )
+
+    return SessionResponse(
+        message="Session created",
+        user=UserResponse.model_validate(user)
+    )
+
+
+@router_v2.delete("")
+def delete_session(
+    response: Response,
+    refresh_token: str = Cookie(None),
+    db: Session = Depends(get_db)
+):
+    """刪除 session (v2 logout)"""
+    if refresh_token:
+        try:
+            revoke_refresh_token(refresh_token, db)
+        except Exception:
+            pass
+
+    response.delete_cookie(key="access_token")
+    response.delete_cookie(key="refresh_token")
+    return {"message": "Session deleted"}
+
+
+@router_v2.post("/refresh")
+@limiter.limit("20/minute")
+def refresh_session(
+    request: Request,
+    response: Response,
+    refresh_token: str = Cookie(None),
+    db: Session = Depends(get_db)
+):
+    """刷新 session (v2 token refresh)"""
+    if not refresh_token:
+        raise HTTPException(status_code=401, detail="Refresh token missing")
+
+    user = verify_and_revoke_refresh_token(refresh_token, db)
+
+    new_access_token = create_access_token(data={"sub": user.email})
+    new_refresh_token = create_refresh_token(user.id, db)
+
+    response.set_cookie(
+        key="access_token",
+        value=new_access_token,
+        httponly=True,
+        secure=settings.cookie_secure,
+        samesite=settings.cookie_samesite,
+        max_age=900
+    )
+    response.set_cookie(
+        key="refresh_token",
+        value=new_refresh_token,
+        httponly=True,
+        secure=settings.cookie_secure,
+        samesite=settings.cookie_samesite,
+        max_age=604800
+    )
+
+    return {"message": "Session refreshed"}

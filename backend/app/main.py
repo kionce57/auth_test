@@ -55,6 +55,15 @@ api_v1.include_router(users.router, prefix="", tags=["Users"])
 
 app.include_router(api_v1)
 
+# 建立 v2 路由群組
+api_v2 = APIRouter(prefix="/api/v2")
+
+# 註冊路由至 v2
+api_v2.include_router(auth.router_v2, prefix="/sessions", tags=["Sessions (v2)"])
+api_v2.include_router(users.router_v2, prefix="/users", tags=["Users (v2)"])
+
+app.include_router(api_v2)
+
 # 保留舊端點以維持向後相容（標記為 deprecated）
 app.include_router(auth.router, deprecated=True)
 app.include_router(users.router, deprecated=True)
