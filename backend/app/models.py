@@ -11,7 +11,19 @@ class User(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
-    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    # 修改：改為 nullable（Google 使用者沒有密碼）
+    hashed_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    # 新增：Google OAuth 欄位
+    google_id: Mapped[str | None] = mapped_column(
+        String(255), unique=True, nullable=True, index=True
+    )
+    auth_provider: Mapped[str] = mapped_column(
+        String(20), server_default="local", nullable=False
+    )
+    # auth_provider 可能值: "local", "google", "both"
+
     is_active: Mapped[bool] = mapped_column(Boolean, server_default="true", nullable=False)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
