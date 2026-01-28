@@ -80,6 +80,49 @@ docker compose down -v
 - 前端透過 nginx 代理 `/api/*` 到後端
 - 所有服務在同一 Docker 網路中通訊
 
+### Docker 開發模式
+
+**後端 Hot Reload**：
+- 後端程式碼掛載為 volume：`./backend/app:/app/app`
+- 修改程式碼後自動重載，無需重建映像檔
+
+**前端修改**：
+- 前端為生產建置，修改後需重建：
+  ```bash
+  docker compose up -d --build frontend
+  ```
+
+**查看即時日誌**：
+```bash
+# 所有服務
+docker compose logs -f
+
+# 特定服務
+docker compose logs -f backend
+docker compose logs -f frontend
+```
+
+**執行後端指令**：
+```bash
+# 進入後端容器
+docker compose exec backend sh
+
+# 執行 Alembic 指令
+docker compose exec backend uv run alembic upgrade head
+
+# 執行測試
+docker compose exec backend uv run pytest
+```
+
+**完全重置環境**：
+```bash
+# 停止並刪除所有資料（包含資料庫）
+docker compose down -v
+
+# 重新建置並啟動
+docker compose up -d --build
+```
+
 ### 資料庫遷移
 ```bash
 cd backend
@@ -130,21 +173,44 @@ auth_test/
 └── CLAUDE.md                    # 本檔案
 ```
 
-## API Endpoints
+## API Architecture
 
-### Authentication (API v1)
-- `POST /api/v1/auth/register` - 註冊新使用者 (Rate Limit: 3/min)
-- `POST /api/v1/auth/login` - 登入 (設定 HttpOnly Cookie) (Rate Limit: 5/min)
-- `POST /api/v1/auth/logout` - 登出 (撤銷 refresh token)
-- `POST /api/v1/auth/refresh` - 刷新 access token (Token Rotation) (Rate Limit: 20/min)
+### API Versioning Strategy
+專案採用版本化 API 設計，同時保留向後相容：
 
-### Users (API v1)
-- `GET /api/v1/users/me` - 取得當前使用者資訊 (需認證)
+- **API v1** (`/api/v1/*`): RPC 風格端點（form-urlencoded login）
+- **API v2** (`/api/v2/*`): RESTful 風格端點（JSON body, resource-oriented）
+- **Legacy** (`/auth/*`, `/users/*`): 已標記為 deprecated，僅維持相容性
 
-### Health
-- `GET /health` - 健康檢查
+### API v1 Endpoints
 
-**注意**：舊的 `/auth/*` 和 `/users/*` 端點已標記為 deprecated，請使用 `/api/v1/*` 版本。
+**Authentication** (`/api/v1/auth`)
+- `POST /register` - 註冊新使用者 (Rate Limit: 3/min)
+- `POST /login` - 登入，使用 form-urlencoded (Rate Limit: 5/min)
+- `POST /logout` - 登出 (撤銷 refresh token)
+- `POST /refresh` - 刷新 access token (Rate Limit: 20/min)
+
+**Users** (`/api/v1/users`)
+- `GET /me` - 取得當前使用者資訊 (需認證)
+
+### API v2 Endpoints (RESTful)
+
+**Sessions** (`/api/v2/sessions`) - Resource-oriented 設計
+- `POST /api/v2/sessions` - 建立 session (登入), 使用 JSON body (Rate Limit: 5/min)
+- `DELETE /api/v2/sessions` - 刪除 session (登出)
+- `POST /api/v2/sessions/refresh` - 刷新 session (Rate Limit: 20/min)
+
+**Users** (`/api/v2/users`)
+- `POST /api/v2/users` - 建立使用者 (註冊) (Rate Limit: 3/min)
+- `GET /api/v2/users/me` - 取得當前使用者資訊 (需認證)
+
+**Health**
+- `GET /health` - 健康檢查（無版本前綴）
+
+**重要差異**：
+- v1 login 使用 `application/x-www-form-urlencoded`（OAuth2 相容）
+- v2 sessions 使用 `application/json`（更符合現代 API 慣例）
+- v2 採用 HTTP 動詞對應 CRUD 操作（POST 建立、DELETE 刪除）
 
 ## Security Features
 
@@ -176,20 +242,139 @@ TRUST_PROXY=false        # 如果使用反向代理設為 true
 CORS_ORIGINS=http://localhost:5173
 ```
 
+## Code Architecture Deep Dive
+
+### Router 分層架構
+FastAPI 路由採用多層架構，支援 API 版本化與向後相容：
+
+```
+app/main.py
+├── api_v1 (APIRouter: prefix="/api/v1")
+│   ├── auth.router (prefix="", tags=["Authentication"])
+│   └── users.router (prefix="", tags=["Users"])
+├── api_v2 (APIRouter: prefix="/api/v2")
+│   ├── auth.router_v2 (prefix="/sessions", tags=["Sessions (v2)"])
+│   └── users.router_v2 (prefix="/users", tags=["Users (v2)"])
+└── Legacy routers (deprecated=True)
+    ├── auth.router (直接掛載，無前綴)
+    └── users.router (直接掛載，無前綴)
+```
+
+**設計原則**：
+- **單一檔案多路由器**：`routers/auth.py` 同時匯出 `router` (v1) 和 `router_v2`
+- **URL 結構**：
+  - v1: `/api/v1/auth/login` (動詞導向)
+  - v2: `/api/v2/sessions` (資源導向)
+  - Legacy: `/auth/login` (向後相容)
+- **標籤隔離**：不同版本使用不同 Swagger tags 避免混淆
+
+### Token Rotation 資料流
+```
+1. 客戶端發送 refresh_token (HttpOnly Cookie)
+2. verify_and_revoke_refresh_token(token, db):
+   ├─ SELECT FOR UPDATE (行級鎖，防 race condition)
+   ├─ 驗證 token 未過期且未撤銷
+   ├─ 立即標記為 revoked=True (原子操作)
+   └─ 回傳 user
+3. create_refresh_token(user.id, db):
+   ├─ 生成新 token (secrets.token_urlsafe)
+   ├─ 插入資料庫 (expires_at = now + 7 days)
+   └─ 懶刪除舊 token (WHERE expires_at < now)
+4. 回傳新 access_token + refresh_token (HttpOnly Cookies)
+```
+
+**關鍵設計**：
+- `SELECT FOR UPDATE` 避免多個請求同時使用同一 token
+- 立即撤銷 (revoke) 而非刪除，保留審計記錄
+- 懶刪除 (lazy cleanup) 避免每次操作都清理，降低資料庫負擔
+
+### 前端錯誤處理架構
+```
+services/api.ts (axios interceptor)
+├── Response Interceptor (401 錯誤)
+│   ├─ 檢查 refreshing flag (防重複刷新)
+│   ├─ BroadcastChannel 通知其他 Tab
+│   ├─ 呼叫 /refresh 端點
+│   └─ 重試原請求
+└── Error Handler
+    ├─ parseError(error) → 友善訊息
+    └─ 特殊處理 429 (Rate Limit) → 倒數計時
+```
+
+**多 Tab 同步機制**：
+- Tab A 觸發 401 → 設定 `isRefreshing = true` → 廣播 "token-refreshing"
+- Tab B 收到廣播 → 等待 "token-refreshed" 事件
+- Tab A 完成刷新 → 廣播 "token-refreshed" → Tab B 重試請求
+
 ## Development Guidelines
 
 ### 後端開發
+
+**基本原則**：
 - **所有指令必須使用 `uv run` 前綴**：`uv run uvicorn`, `uv run alembic`, `uv run python`
 - **資料庫操作必須使用 Alembic**：不可直接修改資料庫 schema
 - **新增端點必須加入 Rate Limiting**：使用 `@limiter.limit("N/minute")`
 - **認證端點必須使用 HttpOnly Cookie**：不可回傳 token 於 JSON body
 - **密碼處理必須使用 bcrypt**：不可使用其他 hash 演算法
 
+**新增 API 端點 Checklist**：
+1. **選擇 API 版本**：v1 (動詞導向) 或 v2 (RESTful)
+2. **定義 Pydantic schemas**：在 `schemas.py` 新增 request/response models
+3. **實作路由函式**：
+   - v1: 新增至 `routers/auth.py::router` 或 `routers/users.py::router`
+   - v2: 新增至 `routers/auth.py::router_v2` 或 `routers/users.py::router_v2`
+4. **加入 Rate Limiting**：敏感端點（登入、註冊）必須限制
+5. **撰寫測試**：在 `tests/test_routers_*.py` 新增測試案例
+6. **更新文件**：更新本檔案的 API Endpoints 章節
+
+**範例 - 新增 v2 端點**：
+```python
+# backend/app/schemas.py
+class PasswordResetRequest(BaseModel):
+    email: EmailStr
+
+# backend/app/routers/users.py
+@router_v2.post("/password-reset")
+@limiter.limit("3/hour")
+def request_password_reset(
+    request: Request,
+    data: PasswordResetRequest,
+    db: Session = Depends(get_db)
+):
+    # 實作邏輯
+    pass
+```
+
 ### 前端開發
+
+**基本原則**：
 - **API 呼叫必須使用 `services/api.ts`**：自動處理 Cookie 與 token refresh
 - **錯誤處理必須使用 `utils/errorHandler.ts`**：統一錯誤訊息格式
 - **不可使用 localStorage 儲存 token**：安全性風險
 - **表單錯誤必須顯示使用者友善訊息**：使用 `parseError()` 函式
+
+**新增 React 元件 Checklist**：
+1. **使用 TypeScript**：定義 Props 和 State 類型
+2. **使用 AuthContext**：需認證的元件透過 `useAuth()` 取得使用者狀態
+3. **錯誤處理**：使用 try-catch 包裹 API 呼叫，使用 `parseError()` 處理錯誤
+4. **撰寫測試**：在同目錄建立 `*.test.tsx` 檔案，使用 vitest + testing-library
+5. **表單驗證**：客戶端驗證（即時回饋）+ 伺服器端驗證（最終驗證）
+
+**範例 - 新增受保護的頁面**：
+```typescript
+// src/pages/ProfilePage.tsx
+import { useAuth } from '../context/AuthContext';
+
+export default function ProfilePage() {
+  const { user } = useAuth();
+
+  if (!user) {
+    return <Navigate to="/login" />;
+  }
+
+  // 實作頁面邏輯
+}
+```
 
 ### Linus "Good Taste" 檢查清單
 - ✅ 資料結構優先：RefreshToken 模型、BroadcastChannel 消除邊界情況
@@ -199,7 +384,61 @@ CORS_ORIGINS=http://localhost:5173
 
 ## Testing
 
-### 手動測試流程
+### 後端測試 (pytest)
+
+```bash
+cd backend
+
+# 執行所有測試
+uv run pytest
+
+# 執行特定測試檔案
+uv run pytest tests/test_auth.py
+
+# 執行特定測試函式
+uv run pytest tests/test_routers_auth.py::test_register_success
+
+# 生成覆蓋率報告
+uv run pytest --cov=app --cov-report=html
+# 報告位於 htmlcov/index.html
+
+# 顯示詳細輸出
+uv run pytest -v -s
+```
+
+**測試結構**：
+- `tests/conftest.py` - pytest fixtures（測試資料庫、client）
+- `tests/test_auth.py` - 認證邏輯單元測試
+- `tests/test_routers_auth.py` - 認證端點整合測試
+- `tests/test_routers_users.py` - 使用者端點整合測試
+
+### 前端測試 (vitest)
+
+```bash
+cd frontend
+
+# 執行所有測試
+npm test
+
+# 監視模式（開發時使用）
+npm run test
+
+# 生成覆蓋率報告
+npm run test:coverage
+
+# 使用 UI 介面
+npm run test:ui
+```
+
+**測試檔案**：
+- `src/components/LoginForm.test.tsx` - 登入表單元件測試
+- `src/components/RegisterForm.test.tsx` - 註冊表單元件測試
+- `src/services/api.test.ts` - API service 測試
+- `src/utils/errorHandler.test.ts` - 錯誤處理工具測試
+
+### 手動 API 測試
+
+**測試 API v1 (form-urlencoded)**：
 ```bash
 # 1. 註冊新使用者
 curl -X POST http://localhost:8000/api/v1/auth/register \
@@ -224,6 +463,31 @@ curl -X POST http://localhost:8000/api/v1/auth/logout \
   -b cookies.txt
 ```
 
+**測試 API v2 (JSON)**：
+```bash
+# 1. 註冊新使用者
+curl -X POST http://localhost:8000/api/v2/users \
+  -H "Content-Type: application/json" \
+  -d '{"email": "test2@example.com", "password": "testpass123"}'
+
+# 2. 建立 session (登入)
+curl -X POST http://localhost:8000/api/v2/sessions \
+  -H "Content-Type: application/json" \
+  -d '{"email": "test2@example.com", "password": "testpass123"}' \
+  -c cookies.txt -v
+
+# 3. 存取受保護端點
+curl http://localhost:8000/api/v2/users/me -b cookies.txt
+
+# 4. 刷新 session
+curl -X POST http://localhost:8000/api/v2/sessions/refresh \
+  -b cookies.txt -c cookies.txt
+
+# 5. 刪除 session (登出)
+curl -X DELETE http://localhost:8000/api/v2/sessions \
+  -b cookies.txt
+```
+
 ### Rate Limiting 測試
 ```bash
 # 快速連續呼叫 6 次（超過 5/min 限制）
@@ -236,14 +500,15 @@ done
 # 第 6 次應返回 429 Too Many Requests
 ```
 
-### 前端測試
+### 前端整合測試場景
 - **多 Tab 測試**：開啟多個 Tab 同時觸發 401，驗證只有一個 Tab 刷新 token
 - **Rate Limiting UX**：連續登入失敗 6 次，驗證倒數計時顯示
 - **錯誤訊息**：測試不同錯誤（401, 400, 429, 500）顯示專屬訊息
+- **Token 自動刷新**：等待 15 分鐘後操作，驗證自動刷新機制
 
 ## Known Issues & Limitations
 
-### 已修正的問題（v1.0）
+### 已實作的功能（v1.0+）
 - ✅ XSS 風險（localStorage）→ 改用 HttpOnly Cookie
 - ✅ 無 Refresh Token → 實作 7 天 Refresh Token + Rotation
 - ✅ 無 Rate Limiting → 使用 slowapi 實作
@@ -254,15 +519,18 @@ done
 - ✅ Token 累積 → 懶刪除機制
 - ✅ 多 Tab 重複刷新 → BroadcastChannel 同步
 - ✅ 錯誤訊息不友善 → errorHandler utility
+- ✅ Docker 容器化部署 → 完整的 multi-service docker-compose
+- ✅ RESTful API v2 → Resource-oriented endpoints
+- ✅ 測試框架 → pytest (後端) + vitest (前端)
 
 ### 當前限制
-- 無單元測試與整合測試
-- 無 Docker 容器化部署（僅資料庫使用 Docker）
-- 無 CI/CD pipeline
-- 無監控與日誌系統
+- 無 CI/CD pipeline（GitHub Actions 或類似）
+- 無監控與日誌系統（Sentry, Prometheus 等）
 - 無 2FA/TOTP 多因素認證
 - 無 Email 驗證功能
 - 無密碼重設功能
+- 前端測試覆蓋率有限（僅核心元件）
+- 無 E2E 測試（Playwright, Cypress）
 
 ## Troubleshooting
 
