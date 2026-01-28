@@ -8,6 +8,11 @@ class Settings(BaseSettings):
     environment: str = "development"  # development 或 production
     trust_proxy: bool = False  # 是否信任反向代理的 X-Forwarded-For header（僅在有 Nginx 等代理時設為 True）
 
+    # Google OAuth 設定
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    google_redirect_uri: str = "http://localhost:8000/api/v2/sessions/google/callback"
+
     model_config = SettingsConfigDict(case_sensitive=False, env_file=".env")
 
     @property
