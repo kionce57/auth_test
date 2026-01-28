@@ -82,3 +82,50 @@ async def test_exchange_code_for_token_failure(mock_client_class):
 
     with pytest.raises(httpx.HTTPError):
         await exchange_code_for_token("invalid_code")
+
+
+@patch('app.services.oauth.id_token.verify_oauth2_token')
+def test_verify_google_token_success(mock_verify):
+    """測試：成功驗證 Google ID token"""
+    from app.services.oauth import verify_google_token
+
+    mock_verify.return_value = {
+        "sub": "google_12345",
+        "email": "test@gmail.com",
+        "email_verified": True,
+        "name": "Test User",
+        "picture": "https://example.com/photo.jpg"
+    }
+
+    result = verify_google_token("mock_id_token")
+
+    assert result["google_id"] == "google_12345"
+    assert result["email"] == "test@gmail.com"
+    assert result["name"] == "Test User"
+
+
+@patch('app.services.oauth.id_token.verify_oauth2_token')
+def test_verify_google_token_email_not_verified(mock_verify):
+    """測試：Email 未驗證"""
+    from app.services.oauth import verify_google_token
+
+    mock_verify.return_value = {
+        "sub": "google_12345",
+        "email": "test@gmail.com",
+        "email_verified": False
+    }
+
+    with pytest.raises(ValueError, match="Email not verified"):
+        verify_google_token("mock_id_token")
+
+
+@patch('app.services.oauth.id_token.verify_oauth2_token')
+def test_verify_google_token_invalid_token(mock_verify):
+    """測試：無效的 token"""
+    from app.services.oauth import verify_google_token
+    from google.auth.exceptions import GoogleAuthError
+
+    mock_verify.side_effect = GoogleAuthError("Invalid token")
+
+    with pytest.raises(GoogleAuthError):
+        verify_google_token("invalid_token")

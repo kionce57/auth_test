@@ -4,6 +4,8 @@ import time
 from typing import Dict
 from urllib.parse import urlencode
 import httpx
+from google.oauth2 import id_token
+from google.auth.transport import requests as google_requests
 from app.config import settings
 
 
@@ -113,6 +115,38 @@ async def exchange_code_for_token(code: str) -> dict:
         response = await client.post(token_url, data=data)
         response.raise_for_status()
         return response.json()
+
+
+def verify_google_token(id_token_str: str) -> dict:
+    """驗證 Google ID Token 並提取使用者資訊。
+
+    Args:
+        id_token_str: Google ID Token (JWT)
+
+    Returns:
+        包含 google_id, email, name, picture 的 dict
+
+    Raises:
+        ValueError: Email 未驗證
+        google.auth.exceptions.GoogleAuthError: Token 無效
+    """
+    # 驗證 token 簽章與有效期限
+    idinfo = id_token.verify_oauth2_token(
+        id_token_str,
+        google_requests.Request(),
+        settings.google_client_id
+    )
+
+    # 確認 email 已驗證
+    if not idinfo.get("email_verified"):
+        raise ValueError("Email not verified")
+
+    return {
+        "google_id": idinfo["sub"],
+        "email": idinfo["email"],
+        "name": idinfo.get("name"),
+        "picture": idinfo.get("picture")
+    }
 
 
 # Global state manager instance
