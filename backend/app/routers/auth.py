@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from slowapi import Limiter
@@ -312,7 +312,13 @@ def refresh_session(
 
 
 # ============= Google OAuth =============
-from app.services.oauth import state_manager, get_google_oauth_url
+from app.services.oauth import (
+    state_manager,
+    get_google_oauth_url,
+    exchange_code_for_token,
+    verify_google_token,
+    find_or_create_user
+)
 
 
 @router_v2.get("/google/login")
@@ -329,3 +335,88 @@ def google_login(request: Request):
     auth_url = get_google_oauth_url(state)
 
     return RedirectResponse(url=auth_url, status_code=302)
+
+
+@router_v2.get("/google/callback")
+@limiter.limit("20/minute")
+async def google_callback(
+    request: Request,
+    response: Response,
+    code: str = Query(...),
+    state: str = Query(...),
+    db: Session = Depends(get_db)
+):
+    """Google OAuth 回調端點。
+
+    處理 Google 授權完成後的回調，建立/合併使用者並設定 session。
+    """
+    frontend_url = settings.cors_origins.split(',')[0]  # 取第一個 origin
+
+    try:
+        # 1. 驗證 state token (CSRF 防護)
+        if not state_manager.verify(state):
+            return RedirectResponse(
+                url=f"{frontend_url}/login?error=invalid_state",
+                status_code=302
+            )
+
+        # 2. 用 code 交換 access token
+        token_data = await exchange_code_for_token(code)
+
+        # 3. 驗證 ID token 並取得使用者資訊
+        user_info = verify_google_token(token_data["id_token"])
+
+        # 4. 查找或建立使用者（處理帳號合併）
+        user = find_or_create_user(
+            google_id=user_info["google_id"],
+            email=user_info["email"],
+            db=db
+        )
+
+        # 5. 檢查帳號是否停用
+        if not user.is_active:
+            return RedirectResponse(
+                url=f"{frontend_url}/login?error=account_disabled",
+                status_code=302
+            )
+
+        # 6. 建立 JWT tokens（複用現有邏輯）
+        access_token = create_access_token(data={"sub": user.email})
+        refresh_token_value = create_refresh_token(user.id, db)
+
+        # 7. 設定 HttpOnly cookies
+        response = RedirectResponse(url=frontend_url, status_code=302)
+        response.set_cookie(
+            key="access_token",
+            value=access_token,
+            httponly=True,
+            secure=settings.cookie_secure,
+            samesite=settings.cookie_samesite,
+            max_age=900  # 15 分鐘
+        )
+        response.set_cookie(
+            key="refresh_token",
+            value=refresh_token_value,
+            httponly=True,
+            secure=settings.cookie_secure,
+            samesite=settings.cookie_samesite,
+            max_age=604800  # 7 天
+        )
+
+        return response
+
+    except ValueError as e:
+        # Email 未驗證
+        if "Email not verified" in str(e):
+            return RedirectResponse(
+                url=f"{frontend_url}/login?error=email_not_verified",
+                status_code=302
+            )
+        raise
+
+    except Exception as e:
+        # Google API 錯誤或其他錯誤
+        return RedirectResponse(
+            url=f"{frontend_url}/login?error=oauth_failed",
+            status_code=302
+        )
