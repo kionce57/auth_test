@@ -1,6 +1,6 @@
 """Tests for OAuth service."""
 import pytest
-from app.services.oauth import StateManager
+from app.services.oauth import StateManager, get_google_oauth_url
 
 
 def test_state_manager_create_and_verify():
@@ -26,3 +26,14 @@ def test_state_manager_expired_state():
     state = manager.create()
     time.sleep(2)
     assert manager.verify(state) is False
+
+
+def test_get_google_oauth_url():
+    """測試：產生 Google OAuth URL"""
+    state = "test_state_token"
+    url = get_google_oauth_url(state)
+
+    assert "https://accounts.google.com/o/oauth2/v2/auth" in url
+    assert f"state={state}" in url
+    assert "scope=openid+email+profile" in url or "scope=openid%20email%20profile" in url
+    assert "response_type=code" in url

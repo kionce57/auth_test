@@ -2,6 +2,8 @@
 import secrets
 import time
 from typing import Dict
+from urllib.parse import urlencode
+from app.config import settings
 
 
 class StateManager:
@@ -59,6 +61,29 @@ class StateManager:
         ]
         for key in expired_keys:
             del self._states[key]
+
+
+def get_google_oauth_url(state: str) -> str:
+    """產生 Google OAuth 授權 URL。
+
+    Args:
+        state: CSRF 防護 token
+
+    Returns:
+        完整的 Google OAuth 授權 URL
+    """
+    params = {
+        "client_id": settings.google_client_id,
+        "redirect_uri": settings.google_redirect_uri,
+        "response_type": "code",
+        "scope": "openid email profile",
+        "state": state,
+        "access_type": "offline",
+        "prompt": "consent"
+    }
+
+    base_url = "https://accounts.google.com/o/oauth2/v2/auth"
+    return f"{base_url}?{urlencode(params)}"
 
 
 # Global state manager instance
