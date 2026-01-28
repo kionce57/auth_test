@@ -25,6 +25,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     initAuth();
   }, []);
 
+  // OAuth 錯誤處理
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const error = params.get('error');
+
+    const errorMessages: Record<string, string> = {
+      'oauth_failed': 'Google 登入失敗，請稍後再試',
+      'invalid_state': '登入請求已過期，請重新嘗試',
+      'email_not_verified': '請先在 Google 驗證您的 email',
+      'access_denied': '您已取消 Google 登入',
+      'account_disabled': '您的帳號已被停用'
+    };
+
+    if (error && errorMessages[error]) {
+      // 顯示錯誤訊息
+      alert(errorMessages[error]);
+
+      // 清除 URL 參數
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, []);
+
   const login = async (email: string, password: string): Promise<void> => {
     try {
       await authService.login(email, password);
