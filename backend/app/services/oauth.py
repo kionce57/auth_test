@@ -3,6 +3,7 @@ import secrets
 import time
 from typing import Dict
 from urllib.parse import urlencode
+import httpx
 from app.config import settings
 
 
@@ -84,6 +85,34 @@ def get_google_oauth_url(state: str) -> str:
 
     base_url = "https://accounts.google.com/o/oauth2/v2/auth"
     return f"{base_url}?{urlencode(params)}"
+
+
+async def exchange_code_for_token(code: str) -> dict:
+    """用授權碼交換 Google access token。
+
+    Args:
+        code: Google OAuth 授權碼
+
+    Returns:
+        包含 access_token, id_token, refresh_token 的 dict
+
+    Raises:
+        httpx.HTTPError: Google API 請求失敗
+    """
+    token_url = "https://oauth2.googleapis.com/token"
+
+    data = {
+        "code": code,
+        "client_id": settings.google_client_id,
+        "client_secret": settings.google_client_secret,
+        "redirect_uri": settings.google_redirect_uri,
+        "grant_type": "authorization_code"
+    }
+
+    async with httpx.AsyncClient() as client:
+        response = await client.post(token_url, data=data)
+        response.raise_for_status()
+        return response.json()
 
 
 # Global state manager instance
