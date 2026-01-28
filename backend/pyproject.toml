@@ -16,6 +16,9 @@ dependencies = [
     "python-jose[cryptography]>=3.3.0",
     "python-multipart>=0.0.6",
     "slowapi>=0.1.9,<0.2.0",
+    "google-auth>=2.27.0",
+    "google-auth-oauthlib>=1.2.0",
+    "httpx>=0.26.0",
 ]
 
 [project.optional-dependencies]
