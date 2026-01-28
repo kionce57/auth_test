@@ -342,8 +342,9 @@ def google_login(request: Request):
 async def google_callback(
     request: Request,
     response: Response,
-    code: str = Query(...),
-    state: str = Query(...),
+    code: str | None = Query(None),
+    state: str | None = Query(None),
+    error: str | None = Query(None),
     db: Session = Depends(get_db)
 ):
     """Google OAuth 回調端點。
@@ -351,6 +352,24 @@ async def google_callback(
     處理 Google 授權完成後的回調，建立/合併使用者並設定 session。
     """
     frontend_url = settings.cors_origins.split(',')[0]  # 取第一個 origin
+
+    # 處理 Google 回傳的錯誤（例如用戶取消授權）
+    if error:
+        error_mapping = {
+            "access_denied": "access_denied",  # 用戶取消授權
+        }
+        error_code = error_mapping.get(error, "oauth_failed")
+        return RedirectResponse(
+            url=f"{frontend_url}/login?error={error_code}",
+            status_code=302
+        )
+
+    # 確保必要參數存在
+    if not code or not state:
+        return RedirectResponse(
+            url=f"{frontend_url}/login?error=oauth_failed",
+            status_code=302
+        )
 
     try:
         # 1. 驗證 state token (CSRF 防護)
