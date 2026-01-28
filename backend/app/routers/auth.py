@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
+from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from slowapi import Limiter
 from sqlalchemy.orm import Session
@@ -308,3 +309,23 @@ def refresh_session(
     )
 
     return {"message": "Session refreshed"}
+
+
+# ============= Google OAuth =============
+from app.services.oauth import state_manager, get_google_oauth_url
+
+
+@router_v2.get("/google/login")
+@limiter.limit("10/minute")
+def google_login(request: Request):
+    """初始化 Google OAuth flow。
+
+    重導向使用者到 Google 授權頁面。
+    """
+    # 建立 state token (CSRF 防護)
+    state = state_manager.create()
+
+    # 產生 Google OAuth URL
+    auth_url = get_google_oauth_url(state)
+
+    return RedirectResponse(url=auth_url, status_code=302)
