@@ -6,7 +6,9 @@ from urllib.parse import urlencode
 import httpx
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
+from sqlalchemy.orm import Session
 from app.config import settings
+from app.models import User
 
 
 class StateManager:
@@ -147,6 +149,46 @@ def verify_google_token(id_token_str: str) -> dict:
         "name": idinfo.get("name"),
         "picture": idinfo.get("picture")
     }
+
+
+def find_or_create_user(google_id: str, email: str, db: Session) -> User:
+    """查找或建立 Google 使用者，處理帳號合併。
+
+    Args:
+        google_id: Google 使用者 ID (sub claim)
+        email: Google 帳號 email
+        db: Database session
+
+    Returns:
+        User 物件（新建或已存在）
+    """
+    # 1. 用 google_id 查詢（已存在的 Google 使用者）
+    user = db.query(User).filter(User.google_id == google_id).first()
+    if user:
+        return user
+
+    # 2. 用 email 查詢（可能需要合併帳號）
+    user = db.query(User).filter(User.email == email).first()
+    if user:
+        # 合併帳號：連結 Google ID
+        user.google_id = google_id
+        # 如果有密碼則為 "both"，否則為 "google"
+        user.auth_provider = "both" if user.hashed_password else "google"
+        db.commit()
+        db.refresh(user)
+        return user
+
+    # 3. 建立新使用者
+    user = User(
+        email=email,
+        hashed_password=None,
+        google_id=google_id,
+        auth_provider="google"
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
 
 
 # Global state manager instance

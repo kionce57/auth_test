@@ -2,6 +2,8 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from app.services.oauth import StateManager, get_google_oauth_url
+from app.models import User
+from app.auth import hash_password
 
 
 def test_state_manager_create_and_verify():
@@ -129,3 +131,73 @@ def test_verify_google_token_invalid_token(mock_verify):
 
     with pytest.raises(GoogleAuthError):
         verify_google_token("invalid_token")
+
+
+def test_find_or_create_user_new_google_user(db):
+    """測試：首次 Google 登入，建立新使用者"""
+    from app.services.oauth import find_or_create_user
+
+    user = find_or_create_user(
+        google_id="google_123456789",
+        email="newuser@gmail.com",
+        db=db
+    )
+
+    assert user.google_id == "google_123456789"
+    assert user.email == "newuser@gmail.com"
+    assert user.auth_provider == "google"
+    assert user.hashed_password is None
+    assert user.is_active is True
+
+
+def test_find_or_create_user_merge_existing_password_account(db):
+    """測試：已有密碼帳號，Google 登入後合併"""
+    from app.services.oauth import find_or_create_user
+
+    # 先建立密碼帳號
+    existing = User(
+        email="existing@gmail.com",
+        hashed_password=hash_password("password123"),
+        auth_provider="local"
+    )
+    db.add(existing)
+    db.commit()
+    existing_id = existing.id
+
+    # 用相同 email 的 Google 帳號登入
+    user = find_or_create_user(
+        google_id="google_987654321",
+        email="existing@gmail.com",
+        db=db
+    )
+
+    assert user.id == existing_id  # 同一個使用者
+    assert user.google_id == "google_987654321"
+    assert user.auth_provider == "both"
+    assert user.hashed_password is not None  # 保留原密碼
+
+
+def test_find_or_create_user_existing_google_user(db):
+    """測試：已存在的 Google 使用者再次登入"""
+    from app.services.oauth import find_or_create_user
+
+    # 先建立 Google 使用者
+    existing = User(
+        email="google@gmail.com",
+        google_id="google_111",
+        auth_provider="google",
+        hashed_password=None
+    )
+    db.add(existing)
+    db.commit()
+    existing_id = existing.id
+
+    # 再次登入
+    user = find_or_create_user(
+        google_id="google_111",
+        email="google@gmail.com",
+        db=db
+    )
+
+    assert user.id == existing_id
+    assert db.query(User).count() == 1  # 沒有建立新使用者
