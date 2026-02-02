@@ -25,12 +25,14 @@ services:
     container_name: auth_test_backend
     ports:
       - "8000:8000"
+    env_file:
+      - ./backend/.env
     environment:
+      # 覆蓋 .env 中的資料庫連線（Docker 內部網路）
       DATABASE_URL: postgresql://postgres:postgres@db:5432/auth_test
-      SECRET_KEY: ${SECRET_KEY:-dev-secret-key-change-in-production-2024}
       CORS_ORIGINS: http://localhost:3000,http://localhost:5173
-      ENVIRONMENT: ${ENVIRONMENT:-development}
       TRUST_PROXY: "false"
+      # 其他設定從 env_file 讀取：SECRET_KEY, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI
     depends_on:
       db:
         condition: service_healthy

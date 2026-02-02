@@ -404,7 +404,7 @@ async def google_callback(
         refresh_token_value = create_refresh_token(user.id, db)
 
         # 7. 設定 HttpOnly cookies
-        response = RedirectResponse(url=frontend_url, status_code=302)
+        response = RedirectResponse(url=f"{frontend_url}/dashboard", status_code=302)
         response.set_cookie(
             key="access_token",
             value=access_token,

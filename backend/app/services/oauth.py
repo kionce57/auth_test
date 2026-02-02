@@ -133,10 +133,12 @@ def verify_google_token(id_token_str: str) -> dict:
         google.auth.exceptions.GoogleAuthError: Token 無效
     """
     # 驗證 token 簽章與有效期限
+    # clock_skew_in_seconds: 容許時鐘誤差（WSL2/Docker 常見問題）
     idinfo = id_token.verify_oauth2_token(
         id_token_str,
         google_requests.Request(),
-        settings.google_client_id
+        settings.google_client_id,
+        clock_skew_in_seconds=10
     )
 
     # 確認 email 已驗證
